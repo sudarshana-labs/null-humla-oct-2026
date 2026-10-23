@@ -1,0 +1,81 @@
+version: "0.2"
+name: altoro-crew
+summary: >
+  NULL Humla Lab 2. A three-seat pentest crew backed by the participant's own
+  local Ollama: an engagement lead that turns a vague client brief into scope
+  and team instructions, a tester that works one assignment, and a triager that
+  sees only the claims.
+
+# full_bypass at launch, so the seats do not stop on permission prompts, and
+# because a permission mode selects the managed Claude launch: that one runs
+# through a cleared environment (env -i) and forwards only the names declared
+# below. A participant with ANTHROPIC_BASE_URL exported to a corporate proxy
+# therefore cannot have it reach these seats - which is the lab 1 trap, handled
+# here by the spec instead of by an env prefix the person has to remember.
+permission_policy: builtin:yolo
+
+# Every seat talks to the participant's own Ollama. Declared once; a seat may
+# lay its own env over this name by name. Settings only - never a secret, since
+# these values are stored in the database, in snapshots and in rig export.
+env:
+  ANTHROPIC_BASE_URL: "http://localhost:11434"
+  ANTHROPIC_API_KEY: "ollama"
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536"
+
+startup:
+  files:
+    - path: engagement/briefs.md
+      delivery_hint: send_text
+      required: true
+  actions: []
+
+pods:
+  - id: crew
+    label: Altoro Engagement Crew
+    members:
+      - id: lead
+        label: "Lead Pentester - scope, briefing, report"
+        role: orchestrator
+        agent_ref: local:./agents/lead-pentester
+        profile: default
+        runtime: claude-code
+        model: qwen3.5:2b-agentic
+        effort: low
+        cwd: "."
+
+      - id: tester
+        label: "Pentester - one assignment, evidence only"
+        role: hunter
+        agent_ref: local:./agents/pentester
+        profile: default
+        runtime: claude-code
+        model: qwen3.5:2b-agentic
+        effort: low
+        cwd: "."
+
+      - id: triager
+        label: "Triager - claims only, adversarial"
+        role: triager
+        agent_ref: local:./agents/triager
+        profile: default
+        runtime: claude-code
+        model: qwen3.5:2b-agentic
+        effort: low
+        cwd: "."
+
+    edges:
+      - kind: delegates_to
+        from: lead
+        to: tester
+      - kind: delegates_to
+        from: lead
+        to: triager
+      - kind: collaborates_with
+        from: tester
+        to: triager
+      - kind: escalates_to
+        from: tester
+        to: lead
+      - kind: escalates_to
+        from: triager
+        to: lead

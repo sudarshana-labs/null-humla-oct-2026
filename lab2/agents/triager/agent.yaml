@@ -1,0 +1,33 @@
+name: humla-triager
+version: "1.0"
+description: Adversarial verifier - sees claims only, kills what cannot be proven
+
+defaults:
+  runtime: claude-code
+
+imports: []
+
+profiles:
+  default:
+    summary: Triager for the Altoro engagement
+    uses:
+      skills: []
+      guidance: [triager-role]
+      subagents: []
+      plugins: []
+      runtime_resources: []
+    startup:
+      files:
+        - path: guidance.md
+          delivery_hint: send_text
+          required: true
+      actions: []
+
+resources:
+  guidance:
+    - id: triager-role
+      path: guidance.md
+
+startup:
+  files: []
+  actions: []

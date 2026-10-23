@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Altoro Retail Bank - Dashboard</title>
+    <link rel="stylesheet" href="./dashboard.css" />
+  </head>
+  <body>
+    <nav id="breadcrumb"></nav>
+
+    <main>
+      <section id="account">
+        <h2 id="acct-name"></h2>
+        <p id="acct-number"></p>
+      </section>
+
+      <section id="search">
+        <p>Showing results for <span id="term-echo"></span></p>
+      </section>
+
+      <section id="activity">
+        <ul id="tx-list"></ul>
+      </section>
+
+      <footer id="statement-note"></footer>
+    </main>
+
+    <script type="module" src="./dashboard.js"></script>
+  </body>
+</html>

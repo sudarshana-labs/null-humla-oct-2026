@@ -23,3 +23,8 @@ prefix and `--model` flag included. An exported `ANTHROPIC_BASE_URL` or a model
 remembered in `~/.claude.json` overrides your settings and quietly runs a
 hosted model instead of the local one — which looks like success, and is the
 one failure that silently ruins the comparison.
+
+## Presentation
+
+Presented at the venue via Google Slides: 
+* https://docs.google.com/presentation/d/11FvAgbBvU22E9dQmofTyXt62P-apm0MEw2l02cbnr5A/edit?slide=id.h52ab1064261f72da_11_618#slide=id.h52ab1064261f72da_11_618

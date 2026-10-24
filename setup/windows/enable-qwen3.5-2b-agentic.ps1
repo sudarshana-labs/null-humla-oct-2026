@@ -36,6 +36,19 @@ function Note ($m) { Write-Host "  note  $m" }
 
 function Have ($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
+# Windows PowerShell turns a native command's stderr into an ErrorRecord, and
+# with $ErrorActionPreference = 'Stop' that record is a TERMINATING error - even
+# with 2>$null, which discards the text but not the record. `ollama show` on a
+# model that does not exist yet writes to stderr, so probing for a variant would
+# kill the script on exactly the fresh machine it is meant to set up. Route every
+# native ollama call through here: the preference is relaxed for the call, and the
+# result is judged by exit code, the way the shell version judges it.
+function Invoke-Ollama {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & ollama @args 2>&1 } finally { $ErrorActionPreference = $old }
+}
+
 # Recursively turn ConvertFrom-Json's PSCustomObjects into ordered hashtables so
 # we can add/overwrite keys and re-serialise without dropping the rest of the
 # user's ~/.claude.json. Arrays and scalars pass through untouched.
@@ -88,15 +101,47 @@ if (-not $Anywhere) {
   }
 }
 
+# Same deal as the shell version: install Claude Code rather than stopping to
+# complain about it. The installer drops claude.exe in %USERPROFILE%\.local\bin,
+# which this session's PATH may not carry yet, so add that directory and re-check
+# before giving up - the shell script does the same with `hash -r`.
+#
+# One refinement over the shell version: if claude.exe is already sitting there,
+# only PATH is wrong, so skip the download. Re-running the installer would change
+# nothing, and a stripped machine PATH or a terminal opened before the install is
+# the common way to land here.
+$claudeBin = Join-Path $env:USERPROFILE '.local\bin'
 if (-not (Have 'claude')) {
-  Bad 'claude not found on PATH'
-  Note 'Claude Code is not installed. Install it by running this in PowerShell:'
-  Note ''
-  Note '  irm https://claude.ai/install.ps1 | iex'
-  Note ''
-  Note 'It installs to %USERPROFILE%\.local\bin\claude.exe and adds it to PATH.'
-  Note 'Open a new terminal (so PATH refreshes), cd back here, and re-run this.'
-  exit 1
+  $claudeExe  = Join-Path $claudeBin 'claude.exe'
+  $pathWasFixed = $false
+  if (Test-Path $claudeExe) {
+    Note 'claude is installed but not on PATH; adding it'
+    $pathWasFixed = $true
+  } else {
+    Note 'claude not on PATH; installing it'
+    try {
+      Invoke-Expression ((Invoke-WebRequest -UseBasicParsing -Uri 'https://claude.ai/install.ps1').Content)
+    } catch {
+      Note 'the installer did not complete; checking for claude anyway'
+    }
+  }
+  $env:Path = "$claudeBin;$env:Path"
+  if (-not (Have 'claude')) {
+    Bad 'claude still not on PATH after install'
+    Note 'install it by hand, then re-run:'
+    Note '  irm https://claude.ai/install.ps1 | iex'
+    exit 1
+  }
+  if ($pathWasFixed) {
+    Ok 'claude found and added to PATH for this run'
+    # The launch command printed at the end runs in the caller's shell, not this
+    # one, so say how to make the entry stick or that command cannot find claude.
+    Note 'that PATH fix applies to this script only. To make it permanent:'
+    Note ('  [Environment]::SetEnvironmentVariable("Path", "' + $claudeBin +
+          ';" + [Environment]::GetEnvironmentVariable("Path","User"), "User")')
+  } else {
+    Ok 'claude installed'
+  }
 }
 if (-not (Have 'ollama')) { Bad 'ollama not found on PATH'; exit 1 }
 Ok 'claude and ollama on PATH'
@@ -134,7 +179,7 @@ Ok "$Model present"
 # Read the window off the model itself, so the value Claude Code is told can
 # never disagree with the value the model was built with.
 $Ctx = $null
-$params = & ollama show $Model --parameters 2>$null
+$params = Invoke-Ollama show $Model --parameters
 foreach ($line in $params) { if ($line -match 'num_ctx\s+(\d+)') { $Ctx = $Matches[1]; break } }
 if (-not $Ctx) {
   Bad "$Model declares no num_ctx"
@@ -210,14 +255,14 @@ if ($conflict) {
 # between the arms of a lab does exactly this, because each arm loads a model.
 $resident = @()
 try {
-  $resident = & ollama ps 2>$null | Select-Object -Skip 1 | ForEach-Object {
+  $resident = Invoke-Ollama ps | Select-Object -Skip 1 | ForEach-Object {
     $t = ($_ -split '\s+')[0]
     if ($t) { $t }
   }
 } catch { $resident = @() }
 foreach ($m in $resident) {
   if (-not $m -or $m -eq $Model -or $m -eq 'NAME') { continue }
-  & ollama stop $m 2>$null | Out-Null
+  Invoke-Ollama stop $m | Out-Null
   if ($LASTEXITCODE -eq 0) { Ok "stopped $m (freeing room for $Model)" }
   else { Note "could not stop $m; it may still be holding memory" }
 }
@@ -236,18 +281,46 @@ try {
             -ContentType 'application/json' -Body $warmBody -TimeoutSec 180
   if ($resp -and ($resp.PSObject.Properties.Name -contains 'done')) { $warmed = $true }
 } catch { $warmed = $false }
-if ($warmed) { Ok 'model loaded and resident' }
+if ($warmed) {
+  # Match the shell version's placement detail. `ollama ps` has a variable-width
+  # UNTIL column ("4 minutes from now"), so counting back from the end lands on
+  # the wrong fields. Anchor on the percentage in PROCESSOR instead; CONTEXT is
+  # the field after it.
+  $place = ''
+  foreach ($row in (Invoke-Ollama ps)) {
+    $f = @(($row -split '\s+') | Where-Object { $_ })
+    if ($f.Count -eq 0 -or $f[0] -ne $Model) { continue }
+    for ($i = 0; $i -lt $f.Count; $i++) {
+      if ($f[$i] -match '%$') { $place = "$($f[$i]) $($f[$i+1]), ctx $($f[$i+2])"; break }
+    }
+    break
+  }
+  if ($place) { Ok "model loaded and resident ($place)" } else { Ok 'model loaded and resident' }
+}
 else { Note 'could not warm the model; your first prompt will just be slower' }
 
 Write-Host ''
 Write-Host "  $Model is now the default here. Start it with:"
 Write-Host ''
+Write-Host '    PowerShell:'
 Write-Host ('      $env:ANTHROPIC_BASE_URL = ''' + $OllamaHost + '''')
 Write-Host '      $env:ANTHROPIC_API_KEY  = ''ollama'''
 Write-Host '      Remove-Item Env:\ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue'
 Write-Host ('      claude --model ' + $Model + ' --effort low --dangerously-skip-permissions')
 Write-Host ''
-Note 'Set the three env lines in THIS session first. They pin this run to'
+# The README sends people to the .bat launchers from "a normal terminal", which
+# is cmd.exe, where the PowerShell lines above are silently inert - they set
+# nothing, the shell's own ANTHROPIC_BASE_URL still wins, and the run measures
+# a hosted model while looking fine. That is the exact failure this block exists
+# to prevent, so print the cmd form too rather than assume which shell they are in.
+Write-Host '    cmd.exe:'
+Write-Host ('      set ANTHROPIC_BASE_URL=' + $OllamaHost)
+Write-Host '      set ANTHROPIC_API_KEY=ollama'
+Write-Host '      set ANTHROPIC_AUTH_TOKEN='
+Write-Host ('      claude --model ' + $Model + ' --effort low --dangerously-skip-permissions')
+Write-Host ''
+Note 'Set the three env lines for YOUR shell in THIS session first. They pin'
+Note 'this run to'
 Note 'Ollama, so an exported proxy or key in your shell cannot quietly redirect'
 Note "the run to a hosted model. They mirror the macOS/Linux 'env' prefix."
 Write-Host ''

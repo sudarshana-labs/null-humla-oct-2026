@@ -61,7 +61,21 @@ if [ "$ALLOW_ANYWHERE" -eq 0 ]; then
   fi
 fi
 
-command -v claude >/dev/null 2>&1 || { bad "claude not found on PATH"; exit 1; }
+if ! command -v claude >/dev/null 2>&1; then
+  note "claude not on PATH; installing it"
+  curl -fsSL https://claude.ai/install.sh | bash || true
+  # install.sh drops the binary in ~/.local/bin, which this shell may not have
+  # on PATH yet; add it and clear the command-lookup cache before re-checking.
+  export PATH="$HOME/.local/bin:$PATH"
+  hash -r 2>/dev/null || true
+  if ! command -v claude >/dev/null 2>&1; then
+    bad "claude still not on PATH after install"
+    note "install it by hand, then re-run:"
+    note "  curl -fsSL https://claude.ai/install.sh | bash"
+    exit 1
+  fi
+  ok "claude installed"
+fi
 command -v ollama >/dev/null 2>&1 || { bad "ollama not found on PATH"; exit 1; }
 ok "claude and ollama on PATH"
 

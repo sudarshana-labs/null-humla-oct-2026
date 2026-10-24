@@ -48,8 +48,22 @@ function Note ($m)      { Write-Host "  note  $m" }
 
 function Have ($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
+# Windows PowerShell turns a native command's stderr into an ErrorRecord, and
+# with $ErrorActionPreference = 'Stop' that record is a TERMINATING error - even
+# with 2>$null, which discards the text but not the record. `ollama show` on a
+# model that does not exist yet writes to stderr, so probing for a variant would
+# kill the script on exactly the fresh machine it is meant to set up. Route every
+# native ollama call through here: the preference is relaxed for the call, and the
+# result is judged by exit code, the way the shell version judges it.
+function Invoke-Ollama {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & ollama @args 2>&1 } finally { $ErrorActionPreference = $old }
+}
+
 function Get-NumCtx ($model) {
-  $out = & ollama show $model --parameters 2>$null
+  $out = Invoke-Ollama show $model --parameters
+  if ($LASTEXITCODE -ne 0) { return $null }   # not built yet - not an error
   foreach ($line in $out) { if ($line -match 'num_ctx\s+(\d+)') { return $Matches[1] } }
   return $null
 }
@@ -74,7 +88,7 @@ if (-not (Have 'ollama')) {
   Say 'Install Ollama from https://ollama.com/download, then re-run.'
   exit 1
 }
-Ok ("ollama CLI present (" + ((& ollama --version 2>&1 | Select-Object -First 1)) + ")")
+Ok ("ollama CLI present (" + ((Invoke-Ollama --version | Select-Object -First 1)) + ")")
 
 # No curl / python3 checks: this port uses Invoke-RestMethod and builds the
 # proof payload natively, so neither is required on Windows.
@@ -146,7 +160,10 @@ foreach ($base in $pairs) {
   $modelfile = Join-Path $workdir "Modelfile.$size"
   Set-Content -Path $modelfile -Value @("FROM $base", "PARAMETER num_ctx $Ctx") -Encoding ascii
   $createLog = Join-Path $workdir "create.$size.log"
-  & ollama create $target -f $modelfile *> $createLog
+  # Route this through Invoke-Ollama too: `ollama create` writes its progress
+  # spinner to stderr, and *> redirection does NOT stop that becoming a
+  # terminating NativeCommandError under $ErrorActionPreference = 'Stop'.
+  Invoke-Ollama create $target -f $modelfile | Set-Content -Path $createLog -Encoding utf8
   if ($LASTEXITCODE -eq 0) {
     $declared = Get-NumCtx $target
     if ($declared -eq "$Ctx") {

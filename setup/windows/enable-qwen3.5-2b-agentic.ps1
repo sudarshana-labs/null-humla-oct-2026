@@ -302,12 +302,25 @@ else { Note 'could not warm the model; your first prompt will just be slower' }
 Write-Host ''
 Write-Host "  $Model is now the default here. Start it with:"
 Write-Host ''
+Write-Host '    PowerShell:'
 Write-Host ('      $env:ANTHROPIC_BASE_URL = ''' + $OllamaHost + '''')
 Write-Host '      $env:ANTHROPIC_API_KEY  = ''ollama'''
 Write-Host '      Remove-Item Env:\ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue'
 Write-Host ('      claude --model ' + $Model + ' --effort low --dangerously-skip-permissions')
 Write-Host ''
-Note 'Set the three env lines in THIS session first. They pin this run to'
+# The README sends people to the .bat launchers from "a normal terminal", which
+# is cmd.exe, where the PowerShell lines above are silently inert - they set
+# nothing, the shell's own ANTHROPIC_BASE_URL still wins, and the run measures
+# a hosted model while looking fine. That is the exact failure this block exists
+# to prevent, so print the cmd form too rather than assume which shell they are in.
+Write-Host '    cmd.exe:'
+Write-Host ('      set ANTHROPIC_BASE_URL=' + $OllamaHost)
+Write-Host '      set ANTHROPIC_API_KEY=ollama'
+Write-Host '      set ANTHROPIC_AUTH_TOKEN='
+Write-Host ('      claude --model ' + $Model + ' --effort low --dangerously-skip-permissions')
+Write-Host ''
+Note 'Set the three env lines for YOUR shell in THIS session first. They pin'
+Note 'this run to'
 Note 'Ollama, so an exported proxy or key in your shell cannot quietly redirect'
 Note "the run to a hosted model. They mirror the macOS/Linux 'env' prefix."
 Write-Host ''
